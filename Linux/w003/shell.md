@@ -65,6 +65,64 @@ hi:1000:/bin/bash
 
 ```
 
+更多
+
+```sh
+# 方法一，ss | awk | sort | uniq | sort
+ss -nt4 | awk -F "[: ]+" 'NR>1 {print $(NF-2)}' | sort | uniq -c | sort -nr
+# 方法二，ss | awk | awk | sort | uniq | sort 
+ss -nt4 -H | awk '{print $5}'|awk -F: '{print $1}'| sort| uniq -c | sort -nr 
+# 方法三，ss | grep | cut | sort | uniq | sort
+ss -nt4 -H | grep -oE "([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]*[[:space:]]*$" | cut -d: -f1 |sort| uniq -c| sort -nr
+
+
+# 栗子
+
+[root@vm7 ~]# ss -nt4 | awk -F "[: ]+" 'NR>1 {print $(NF-2)}' | sort | uniq -c | sort -nr
+      2 192.168.50.1
+[root@vm7 ~]# ss -nt4 -H | awk '{print $5}'|awk -F: '{print $1}'| sort| uniq -c | sort -nr
+      2 192.168.50.1
+[root@vm7 ~]# ss -nt4 -H | grep -oE "([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]*[[:space:]]*$" | cut -d: -f1 |sort| uniq -c| sort -nr
+      2 192.168.50.1
+
+# 
+
+[root@vm7 ~]# cat ss.log
+State  Recv-Q    Send-Q          Local Address:Port        Peer Address:Port
+ESTAB  0         36            192.168.223.110:22         33.93.235.53:60962
+ESTAB  0         36            192.168.223.110:22         53.93.235.53:60962
+ESTAB  0         36            192.168.223.110:22         53.93.235.53:60962
+ESTAB  0         36            192.168.223.110:22         222.93.235.53:60962
+ESTAB  0         36            192.168.223.110:22         222.93.235.52:60962
+ESTAB  0         0             192.168.223.110:22         222.93.235.52:59556
+ESTAB  0         36            192.168.223.110:22         222.93.235.53:60962
+ESTAB  0         36            192.168.223.110:22         222.93.235.54:60962
+ESTAB  0         36            192.168.223.110:22         33.93.235.53:60962
+ESTAB  0         36            192.168.223.110:22         33.93.235.53:60962
+ESTAB  0         36            192.168.223.110:22         53.93.235.53:60962
+ESTAB  0         36            192.168.223.110:22         53.93.235.53:60962
+ESTAB  0         36            192.168.223.110:22         53.93.235.53:60962
+
+
+[root@vm7 ~]# cat ss.log | awk -F "[: ]+" 'NR>1 {print $(NF-2)}' | sort | uniq -c | sort -nr
+     13 22
+[root@vm7 ~]# cat ss.log | awk '{print $5}'|awk -F: '{print $1}'| sort| uniq -c | sort -nr
+      5 53.93.235.53
+      3 33.93.235.53
+      2 222.93.235.53
+      2 222.93.235.52
+      1 Address
+      1 222.93.235.54
+[root@vm7 ~]# cat ss.log | grep -oE "([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]*[[:space:]]*$" | cut -d: -f1 |sort| uniq -c| sort -nr
+      5 53.93.235.53
+      3 33.93.235.53
+      2 222.93.235.53
+      2 222.93.235.52
+      1 222.93.235.54
+
+
+```
+
 
 
 
