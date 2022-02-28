@@ -442,7 +442,345 @@ web in dns
 
 # 搭建并实现智能DNS
 
-# 使用iptable实现: 放行ssh,telnet, ftp, web服务80端口，其他端口服务全部拒绝
+## 搭建DNS（单机）
+
+网络
+
+```sh
+[root@dns ~]# hostname -I | tr ' ' '\n'
+192.168.20.11
+192.168.12.11
+
+```
+
+安装bind
+
+```sh
+[root@dns ~]# yum -y install bind
+```
+
+named配置文件修改
+
+```sh
+[root@dns ~]# vi /etc/named.conf
+
+//# 注释掉
+        // listen-on port 53 { 127.0.0.1; };
+        // listen-on-v6 port 53 { ::1; };
+
+        //allow-query     { localhost; };
+
+
+
+//# Comment out and write in zone files。这个注释掉。添加到zone文件里？
+// zone "." IN {
+//      type hint;
+//      file "named.ca";
+//};
+
+//# 这个也注释
+//include "/etc/named.rfc1912.zones";
+
+//# ACL追加
+acl china {
+        192.168.12.0/24;
+};
+
+acl oversea {
+        192.168.20.0/24;
+};
+
+//# view追加
+view chinaview {
+        match-clients { china; };
+        include "/etc/named.rfc1912.zones.china";
+};
+
+view overseaview {
+        match-clients { oversea; };
+        include "/etc/named.rfc1912.zones.oversea";
+};
+
+```
+
+创建zone配置文件
+
+```sh
+
+[root@dns named]# cat /etc/named.rfc1912.zones.china
+zone "." IN {
+      type hint;
+      file "named.ca";
+};
+
+zone "dns.hai" IN {
+        type master;
+        file "dns.hai.zone.china";
+};
+
+
+
+[root@dns named]# cat /etc/named.rfc1912.zones.oversea
+zone "." IN {
+      type hint;
+      file "named.ca";
+};
+
+zone "dns.hai" IN {
+        type master;
+        file "dns.hai.zone.oversea";
+};
+
+
+[root@dns ~]# chgrp named /etc/named.rfc1912.zones.*
+[root@dns ~]# ll /etc/named.rfc1912.zones.oversea
+-rw-r--r-- 1 root named 82 Feb 28 15:05 /etc/named.rfc1912.zones.oversea
+[root@dns ~]# ll /etc/named.rfc1912.zones.china
+-rw-r--r-- 1 root named 80 Feb 28 15:05 /etc/named.rfc1912.zones.china
+
+```
+
+创建区域数据库配置文件
+
+```sh
+
+[root@dns ~]# cp -p /var/named/dns.hai.zone{,.china}
+[root@dns ~]# cp -p /var/named/dns.hai.zone{,.oversea}
+
+
+[root@dns ~]# cat /var/named/dns.hai.zone.china
+$TTL 1D
+@       IN SOA  master dns.hai. (
+                                        20220404        ; serial
+                                        1D      ; refresh
+                                        1H      ; retry
+                                        1W      ; expire
+                                        3H )    ; minimum
+        NS      master
+master  A       192.168.20.11
+web     A       192.168.12.10
+www     CNAME   web
+
+[root@dns ~]# cat /var/named/dns.hai.zone.oversea
+$TTL 1D
+@       IN SOA  master dns.hai. (
+                                        20220404        ; serial
+                                        1D      ; refresh
+                                        1H      ; retry
+                                        1W      ; expire
+                                        3H )    ; minimum
+        NS      master
+master  A       192.168.20.11
+web     A       192.168.20.21
+www     CNAME   web
+
+
+```
+
+验证配置文件
+
+```sh
+[root@dns named]# named-checkconf
+/etc/named.rfc1912.zones:17: when using 'view' statements, all zones must be in views
+
+//# Comment out and write in zone files。这个注释掉。添加到zone文件里？
+// zone "." IN {
+//      type hint;
+//      file "named.ca";
+//};
+
+//# 这个也注释
+//include "/etc/named.rfc1912.zones";
+
+```
+
+验证zone文件
+
+```sh
+[root@dns named]# named-checkzone dns.hai /var/named/dns.hai.zone.china
+zone dns.hai/IN: loaded serial 20220404
+OK
+[root@dns named]# named-checkzone dns.hai /var/named/dns.hai.zone.oversea
+zone dns.hai/IN: loaded serial 20220404
+OK
+[root@dns named]#
+
+```
+
+重启服务
+
+```sh
+[root@dns named]# systemctl restart named
+```
+
+## 网页服务器配置
+
+服务器ip
+
+```sh
+[root@www ~]# hostname -I
+192.168.20.21 192.168.12.10
+```
+
+配置nginx
+
+```sh
+[root@www ~]# vi /usr/local/nginx/conf/nginx.conf
+# 添加配置和相应主页文件
+    server {
+        listen 192.168.12.10:80;
+        root html/china;
+    }
+
+
+    server {
+        listen 192.168.20.21:80;
+        root html/oversea;
+    }
+
+[root@www ~]# nginx -t
+
+[root@www ~]# systemctl start nginx
+
+```
+
+直接用ip测试的时候
+
+```sh
+[root@www ~]# curl 192.168.20.21
+oversea hp
+[root@www ~]# curl 192.168.12.10
+china hp
+
+```
+
+## 客户端DNS配置
+
+ip和DNS配置
+
+```sh
+[root@vm2 ~]# hostname
+vm2
+
+[root@vm2 ~]# nmcli con add type ethernet ifname ens160 con-name ens160-l-dns autoconnect yes save yes ipv4.method manual ipv4.addr "192.168.20.21/24" ipv4.dns "192.168.20.11"
+Connection 'ens160-l-dns' (37f2cdf1-5c19-4634-b5c6-d10a76517f6f) successfully added.
+[root@vm2 ~]# nmcli con up ens160-l-dns
+Connection successfully activated (D-Bus active path: /org/freedesktop/NetworkManager/ActiveConnection/3)
+[root@vm2 ~]# nmcli con add type ethernet ifname ens224 con-name ens224-l-dns autoconnect yes save yes ipv4.method manual ipv4.addr "192.168.12.10/24" ipv4.dns "192.168.12.11"
+Connection 'ens224-l-dns' (fa35671d-1e19-42e0-abaf-2fbecde48e5c) successfully added.
+[root@vm2 ~]# nmcli con up ens224-l-dns
+Connection successfully activated (D-Bus active path: /org/freedesktop/NetworkManager/ActiveConnection/4)
+[root@vm2 ~]# ip -br a
+lo               UNKNOWN        127.0.0.1/8 ::1/128
+ens160           UP             192.168.20.21/24 fe80::4a8c:b41f:bce7:a723/64
+ens224           UP             192.168.12.10/24 fe80::6f2f:5631:6051:ca4d/64
+[root@vm2 ~]# cat /etc/resolv.conf
+# Generated by NetworkManager
+nameserver 192.168.20.11
+nameserver 192.168.12.11
+
+```
+
+这个环境不同网卡不能互通
+
+```sh
+[root@vm2 ~]# ping -c1 -w1 192.168.12.11 -I ens160
+PING 192.168.12.11 (192.168.12.11) from 192.168.20.21 ens160: 56(84) bytes of data.
+
+--- 192.168.12.11 ping statistics ---
+1 packets transmitted, 0 received, 100% packet loss, time 0ms
+
+[root@vm2 ~]# ping -c1 -w1 192.168.20.11 -I ens224
+PING 192.168.20.11 (192.168.20.11) from 192.168.12.10 ens224: 56(84) bytes of data.
+
+--- 192.168.20.11 ping statistics ---
+1 packets transmitted, 0 received, 100% packet loss, time 0ms
+
+# 相同的可以ping
+[root@vm2 ~]# ping -c1 -w1 192.168.20.11 -I ens160
+PING 192.168.20.11 (192.168.20.11) from 192.168.20.21 ens160: 56(84) bytes of data.
+64 bytes from 192.168.20.11: icmp_seq=1 ttl=64 time=0.893 ms
+
+--- 192.168.20.11 ping statistics ---
+1 packets transmitted, 1 received, 0% packet loss, time 0ms
+rtt min/avg/max/mdev = 0.893/0.893/0.893/0.000 ms
+
+[root@vm2 ~]# ping -c1 -w1 192.168.12.11 -I ens224
+PING 192.168.12.11 (192.168.12.11) from 192.168.12.10 ens224: 56(84) bytes of data.
+64 bytes from 192.168.12.11: icmp_seq=1 ttl=64 time=0.944 ms
+
+--- 192.168.12.11 ping statistics ---
+1 packets transmitted, 1 received, 0% packet loss, time 0ms
+rtt min/avg/max/mdev = 0.944/0.944/0.944/0.000 ms
+
+
+```
+
+nslookup测试
+
+```sh
+[root@vm2 ~]# nslookup web.dns.hai
+Server:         192.168.20.11
+Address:        192.168.20.11#53
+
+Name:   web.dns.hai
+Address: 192.168.20.21
+
+# 指定china区域的DNS服务器ip
+[root@vm2 ~]# nslookup web.dns.hai 192.168.12.11
+Server:         192.168.12.11
+Address:        192.168.12.11#53
+
+Name:   web.dns.hai
+Address: 192.168.12.10
+
+```
+
+网站访问测试
+
+```sh
+[root@vm2 ~]# curl web.dns.hai
+oversea hp
+
+# 默认的第一个是oversea
+[root@vm2 ~]# curl web.dns.hai --interface ens160
+oversea hp
+
+# ？？
+[root@vm2 ~]# curl web.dns.hai --interface ens224
+curl: (7) Failed to connect to web.dns.hai port 80: No route to host
+
+[root@vm2 ~]# curl web.dns.hai --interface 192.168.12.10
+oversea hp
+[root@vm2 ~]# curl web.dns.hai --interface 192.168.20.21
+oversea hp
+
+```
+
+修改客户端的第一DNS服务器
+
+```sh
+
+[root@vm2 ~]# cat /etc/resolv.conf
+# Generated by NetworkManager
+nameserver 192.168.12.11
+nameserver 192.168.20.11
+[root@vm2 ~]# nslookup www.dns.hai
+Server:         192.168.12.11
+Address:        192.168.12.11#53
+
+www.dns.hai     canonical name = web.dns.hai.
+Name:   web.dns.hai
+Address: 192.168.12.10
+
+[root@vm2 ~]# curl web.dns.hai
+china hp
+
+```
+
+
+
+# ？？使用iptable实现: 放行ssh,telnet, ftp, web服务80端口，其他端口服务全部拒绝
 
 设置，假设其他的设置都不要
 
@@ -475,8 +813,26 @@ Chain INPUT (policy ACCEPT 0 packets, 0 bytes)
 
 # NAT原理总结
 
+要点
+
+- 转换源IP和端口
+- 转换目的IP和端口
+
+应用场景1
+
+- 内网访问外网，隐藏内网
+- 内网访问外外网，共用公网ip
+
+流程
+
+1. 内网的主机发起请求连接外网主机
+2. 请求包进过路由器之类的设备时
+   1. 修改源主机的ip为路由器的公网ip
+   2. 保留NAT映射表
+3. 响应包回来时
+   1. 根据NAT映射表，修改包的目的ip为内网主机ip
 
 
 
+# -- iptables实现SNAT和DNAT，并对规则持久保存
 
-# iptables实现SNAT和DNAT，并对规则持久保存
