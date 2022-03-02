@@ -485,6 +485,285 @@ Mar 02 12:39:20 mysql systemd[1]: Started MySQL Server 8 GPL.
 
 # Ansible playbook实现apache批量部署
 
-并对不同主机提供以各自IP地址为内容的index.html
+> 对不同主机提供以各自IP地址为内容的index.html
+
+## Ansible环境配置
+
+Ansible的hosts
+
+```sh
+
+[root@vm1 mysql8]# cat /etc/ansible/hosts
+[local]
+manager ansible_connection=local
+
+[db]
+mysql ansible_host=192.168.20.21
+
+[web]
+web1 ansible_host=192.168.20.21
+web2 ansible_host=192.168.20.13
+
+```
+
+ssh密钥配置
+
+```sh
+
+[root@vm1 ~]# cat set_ssh_key.sh
+#!/bin/bash
+# usage: copy ssh key to remote hosts, generate if necessary
+# version: 2022-03-02 new
+
+rpm -q sshpass &> /dev/null || { dnf -y install epel-release && dnf -y install sshpass; }
+
+[ -f /root/.ssh/id_rsa ] || ssh-keygen -f /root/.ssh/id_rsa -P ''
+
+[ -f hosts ] || { echo "you need to create a hosts file containing a list of ip first"; exit 1; }
+
+read -s -p "Input the remote vm's password: " INPUT
+export SSHPASS=$INPUT
+echo $SSHPASS
+while read ip; do
+  sshpass -e ssh-copy-id -f -o StrictHostKeyChecking=no $ip
+done < hosts
+
+[root@vm1 ~]# bash set_ssh_key.sh
+Input the remote vm's password: Koredesu22
+/usr/bin/ssh-copy-id: INFO: Source of key(s) to be installed: "/root/.ssh/id_rsa.pub"
+
+Number of key(s) added: 1
+
+Now try logging into the machine, with:   "ssh -o 'StrictHostKeyChecking=no' '192.168.20.21'"
+and check to make sure that only the key(s) you wanted were added.
+
+/usr/bin/ssh-copy-id: INFO: Source of key(s) to be installed: "/root/.ssh/id_rsa.pub"
+
+Number of key(s) added: 1
+
+Now try logging into the machine, with:   "ssh -o 'StrictHostKeyChecking=no' '192.168.20.13'"
+and check to make sure that only the key(s) you wanted were added.
+
+
+```
+
+Ansible测试
+
+```sh
+
+[root@vm1 ~]# ansible web -m ping
+web1 | SUCCESS => {
+    "ansible_facts": {
+        "discovered_interpreter_python": "/usr/libexec/platform-python"
+    },
+    "changed": false,
+    "ping": "pong"
+}
+web2 | SUCCESS => {
+    "ansible_facts": {
+        "discovered_interpreter_python": "/usr/libexec/platform-python"
+    },
+    "changed": false,
+    "ping": "pong"
+}
+
+```
+
+
+
+## Playbook安装httpd（dnf）
+
+### 项目目录
+
+```sh
+
+[root@vm1 httpd]# pwd
+/root/ansible/httpd
+[root@vm1 httpd]# tree
+.
+├── install_httpd_rpm.yml
+├── templates
+│   └── httpd.index.html.j2
+└── test.yml
+
+1 directory, 3 files
+
+```
+
+
+
+### Playbook文件
+
+模板
+
+```sh
+
+[root@vm1 httpd]# cat templates/httpd.index.html.j2
+<h1>welcome to httpd</h1>
+this server is: {{ ansible_nodename }} [ {{ ansible_ens160.ipv4.address }} ]
+
+
+```
+
+Playbook
+
+```sh
+
+[root@vm1 httpd]# cat install_httpd_rpm.yml
+---
+- hosts: web
+  gather_facts: yes
+
+  tasks:
+    - name: install httpd via dnf
+      yum: name=httpd state=present
+    - name: create index file
+      template: src=httpd.index.html.j2 dest=/var/www/html/index.html
+    - name: start httpd
+      service: name=httpd state=started
+    - name: test web
+      shell: "curl {{ item }}"
+      loop:
+        - 192.168.20.21
+        - 192.168.20.13
+
+```
+
+
+
+### 执行
+
+多次执行
+
+```sh
+
+[root@vm1 httpd]# ansible-playbook install_httpd_rpm.yml
+
+PLAY [web] *****************************************************************************************************
+
+TASK [Gathering Facts] *****************************************************************************************
+ok: [web2]
+ok: [web1]
+
+TASK [install httpd via dnf] ***********************************************************************************
+ok: [web1]
+ok: [web2]
+
+TASK [create index file] ***************************************************************************************
+ok: [web2]
+ok: [web1]
+
+TASK [start httpd] *********************************************************************************************
+ok: [web1]
+ok: [web2]
+
+TASK [test web] ************************************************************************************************
+changed: [web1] => (item=192.168.20.21)
+changed: [web2] => (item=192.168.20.21)
+changed: [web2] => (item=192.168.20.13)
+changed: [web1] => (item=192.168.20.13)
+
+PLAY RECAP *****************************************************************************************************
+web1                       : ok=5    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+web2                       : ok=5    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+
+
+```
+
+### 测试
+
+```sh
+
+[root@vm1 httpd]# curl 192.168.20.21
+<h1>welcome to httpd</h1>
+this server is: web1 [ 192.168.20.21 ]
+
+[root@vm1 httpd]# curl 192.168.20.13
+<h1>welcome to httpd</h1>
+this server is: web2 [ 192.168.20.13 ]
+
+
+```
+
+
 
 # http的报文结构和状态码总结
+
+## http报文结构
+
+请求报文
+
+```
+方法：URL：http版本  --->  请求行
+首部
+实体
+```
+
+响应报文
+
+```
+版本：状态码：短语
+首部
+实体
+```
+
+栗子
+
+```sh
+
+[root@vm1 httpd]# curl -v 192.168.20.13
+* Rebuilt URL to: 192.168.20.13/
+*   Trying 192.168.20.13...
+* TCP_NODELAY set
+* Connected to 192.168.20.13 (192.168.20.13) port 80 (#0)
+> GET / HTTP/1.1	# 请求报文的请求行
+> Host: 192.168.20.13	# 首部字段
+> User-Agent: curl/7.61.1	# 首部字段
+> Accept: */*	# 首部字段
+>
+< HTTP/1.1 200 OK	# 响应报文的开始行
+< Date: Wed, 02 Mar 2022 05:58:17 GMT	# 首部字段
+< Server: Apache/2.4.37 (AlmaLinux)	# 首部字段
+< Last-Modified: Wed, 02 Mar 2022 05:48:32 GMT	# 首部字段
+< ETag: "42-5d935d4e7e978"	# 首部字段
+< Accept-Ranges: bytes	# 首部字段
+< Content-Length: 66	# 首部字段
+< Content-Type: text/html; charset=UTF-8	# 首部字段
+<
+<h1>welcome to httpd</h1>	# 页面主体
+this server is: web2 [ 192.168.20.13 ]
+
+* Connection #0 to host 192.168.20.13 left intact
+
+```
+
+
+
+## status状态码
+
+请求处理的情况
+
+大全
+
+https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Status
+
+分类
+
+- 1xx：100-101：信息提示
+- 2xx：200-206：成功
+  - 200：响应报文的entity-body，OK
+- 3xx：300-307：重定向
+  - 301：原URL资源被删除，报文首部Location指明了新位置
+  - 302：临时新位置
+  - 304：客户端发出了条件式请求，但服务器上资源为发生变化，响应Not Modified
+  - 307浏览器内部重定向
+- 4xx：400-415：错误类，客户端
+  - 401：需要输入账号密码，Unauthorized
+  - 403：禁止：forbidden
+  - 404：找不到资源，not found
+- 5xx：500-505：错误类，服务器
+  - 500：服务器内部错误
+  - 502：代理服务器从后端服务器收到一条伪响应，例如无法连接到网关，bad gateway
+  - 503：服务不可用，例如临时维护or超载导致无法处理请求
+  - 504：网关超时
+

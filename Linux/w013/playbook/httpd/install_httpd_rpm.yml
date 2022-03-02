@@ -1,0 +1,16 @@
+---
+- hosts: web
+  gather_facts: yes
+
+  tasks:
+    - name: install httpd via dnf
+      yum: name=httpd state=present
+    - name: create index file
+      template: src=httpd.index.html.j2 dest=/var/www/html/index.html
+    - name: start httpd
+      service: name=httpd state=started
+    - name: test web
+      shell: "curl {{ item }}"
+      loop:
+        - 192.168.20.21
+        - 192.168.20.13
