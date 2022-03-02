@@ -1,0 +1,19 @@
+
+---
+- hosts: mysql
+  gather_facts: no
+  vars:
+    datadir: /data/mysql
+    newpass: MySQL123!
+  tasks:
+    - name: test file
+      shell: ls /usr/local/mysql-8.0.11-linux-glibc2.12-x86_64
+      register: mysqldir
+    - name: echo test
+      debug:
+        msg: "{{ mysqldir }}"
+    - name: when
+      debug:
+        msg: "path exist"
+      when: mysqldir.rc == 0
+        

@@ -1,0 +1,61 @@
+---
+- hosts: mysql
+  gather_facts: no
+  vars:
+    datadir: /data/mysql
+    newpass: MySQL123!
+  tasks:
+    - name: stop mysql services if any
+      service: name=mysqld8 state=stopped
+      ignore_errors: yes
+
+    - name: remote old pkgs
+      shell: yum -y --quiet remove $(rpm -qa | grep -i -e mysql -e maria)
+    - name: remote old datadir of yum install
+      file: path=/var/lib/mysql state=absent
+    - name: remove old log
+      file: path=/var/log/mysqld.log state=absent
+    - name: remove old datadir
+      file: path={{ datadir }} state=absent
+    - name: remove user
+      user: name=mysql state=absent remove=yes
+    - name: remove group
+      group: name=mysql state=absent
+    - name: add group
+      group: name=mysql gid=360
+    - name: add user
+      user: name=mysql uid=360 group=mysql create_home=no system=yes
+
+
+    - name: check if mysql program exist
+      shell: ls /usr/local/mysql-8.0.11-linux-glibc2.12-x86_64
+      register: mysqldir
+    - name: extract tarball. you need to get it first
+      unarchive: src=mysql-8.0.11-linux-glibc2.12-x86_64.tar.gz dest=/usr/local
+      when: mysqldir.rc != 0
+
+    - name: create symbol link
+#      shell: chdir=/usr/local ln -sf mysql-8.0.11-linux-glibc2.12-x86_64 mysql
+      file: src=/usr/local/mysql-8.0.11-linux-glibc2.12-x86_64 dest=/usr/local/mysql state=link
+    - name: create my.cnf
+      copy: dest=/etc/my.cnf content='[mysqld]\ndatadir = {{ datadir }}\n' force=yes
+
+    - name: initialize database
+      shell: "/usr/local/mysql/bin/mysqld --initialize --user=mysql --datadir={{ datadir }} 2> /var/log/mysqld.log"
+      register: oldpass
+    - name: get oldpass
+      shell: "awk '/A temporary password/{print $NF}' /var/log/mysqld.log"
+      register: oldpass
+
+
+    - name: copy systemd unit
+      copy: src=mysqld8.service dest=/etc/systemd/system/mysqld8.service
+    - name: start mysqld8
+      service: name=mysqld8 state=started
+    - name: set mysql root passed
+      shell: /usr/local/mysql/bin/mysqladmin -uroot -p{{ oldpass.stdout }} password "{{ newpass }}"
+      register: error1
+      ignore_errors: yes
+    - name: show err
+      debug:
+        msg: "{{ error1 }}"
